@@ -1,6 +1,9 @@
-name: Nightly Windows build
+name: Peekaboo Windows builds
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -10,6 +13,8 @@ permissions:
 
 jobs:
   build:
+    permissions:
+      contents: read
     runs-on: windows-latest
 
     steps:
@@ -34,3 +39,31 @@ jobs:
           path: dist/Peekaboo.exe
           if-no-files-found: error
           retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download executable
+        uses: actions/download-artifact@v4
+        with:
+          name: Peekaboo-windows-x64
+          path: dist
+
+      - name: Update latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest \
+              --title "Latest build" \
+              --notes "Automatically updated Peekaboo build." \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              || gh release view latest >/dev/null
+          fi
+          gh release upload latest dist/Peekaboo.exe --clobber

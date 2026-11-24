@@ -55,9 +55,12 @@ The executable is created at `dist\Peekaboo.exe`. Start it with:
 .\dist\Peekaboo.exe
 ```
 
-## Nightly Windows build
+## Windows builds
 
-GitHub Actions builds `Peekaboo.exe` every day at 02:00 UTC. You can also start
-a build from the **Actions** tab using **Run workflow**. Download the executable
-from the completed workflow run's **Artifacts** section; artifacts are kept for
-7 days.
+GitHub Actions rebuilds Peekaboo on every push to `main` and every day at 02:00
+UTC. You can also start a build from the **Actions** tab using **Run workflow**.
+Each successful build updates the `latest` pre-release.
+
+[Download the latest Peekaboo.exe](https://github.com/matohasic/Peekaboo/releases/download/latest/Peekaboo.exe)
+
+The workflow also keeps a run-specific executable artifact for 7 days.

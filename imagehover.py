@@ -114,10 +114,10 @@ def create_app_icon():
 # CONFIGURATION
 # =====================================================
 
-PREVIEW_MAX_WIDTH = 700
-PREVIEW_MAX_HEIGHT = 600
+PREVIEW_MAX_WIDTH = 350
+PREVIEW_MAX_HEIGHT = 300
 
-HOVER_DELAY = 450
+HOVER_DELAY = 100
 POLL_INTERVAL = 100
 DETECTION_INTERVAL = 200
 
@@ -134,7 +134,7 @@ IMAGE_EXTENSIONS = {
 def calculate_preview_size(size):
 
     if not size.isValid():
-        return QSize(400, 300)
+        return QSize(200, 150)
 
     return size.scaled(
         PREVIEW_MAX_WIDTH - 4,
@@ -328,7 +328,7 @@ class Preview(QWidget):
         self.movie = None
         self.current_file = None
 
-        self.resize(400, 300)
+        self.resize(200, 150)
 
     def display(self, path, x, y):
 

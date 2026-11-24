@@ -20,7 +20,7 @@ from PySide6.QtGui import (
 )
 
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QSize,
+    Qt, QTimer, QPoint, QSize, QByteArray, QBuffer, QIODevice,
     QThread, Signal, QObject
 )
 
@@ -326,6 +326,7 @@ class Preview(QWidget):
         """)
 
         self.movie = None
+        self.movie_buffer = None
         self.current_file = None
 
         self.resize(200, 150)
@@ -340,19 +341,28 @@ class Preview(QWidget):
 
             if self.current_file != path:
 
-                if self.movie:
-                    self.movie.stop()
-
-                self.movie = None
+                self._release_movie()
                 self.image_label.clear()
                 self.current_file = path
 
-                if path.lower().endswith(".gif"):
+                if path.lower().endswith((".gif", ".webp")):
 
                     reader = QImageReader(path)
                     target_size = calculate_preview_size(reader.size())
 
-                    self.movie = QMovie(path)
+                    self.movie_buffer = QBuffer(self)
+                    self.movie_buffer.setData(
+                        QByteArray(Path(path).read_bytes())
+                    )
+
+                    if not self.movie_buffer.open(
+                        QIODevice.OpenModeFlag.ReadOnly
+                    ):
+                        raise OSError(
+                            f"Unable to read animated image: {path}"
+                        )
+
+                    self.movie = QMovie(self.movie_buffer)
                     self.movie.setScaledSize(target_size)
 
                     self.image_label.setMovie(self.movie)
@@ -423,19 +433,33 @@ class Preview(QWidget):
 
     def close_preview(self):
 
-        if self.movie:
-            self.movie.stop()
-            self.movie = None
-
+        self._release_movie()
+        self.image_label.clear()
         self.hide()
         self.current_file = None
+
+    def _release_movie(self):
+
+        if self.movie:
+            movie = self.movie
+            self.movie = None
+            movie.stop()
+            self.image_label.setMovie(None)
+            movie.setDevice(None)
+            movie.deleteLater()
+
+        if self.movie_buffer:
+            buffer = self.movie_buffer
+            self.movie_buffer = None
+            buffer.close()
+            buffer.deleteLater()
 
 
 # =====================================================
 # MAIN APPLICATION
 # =====================================================
 
-class ImageHover(QObject):
+class Peekaboo(QObject):
 
     def __init__(self, app):
         super().__init__()
@@ -462,12 +486,12 @@ class ImageHover(QObject):
         self.app_icon = create_app_icon()
 
         self.tray = QSystemTrayIcon(self.app_icon)
-        self.tray.setToolTip("ImageHover - Enabled")
+        self.tray.setToolTip("Peekaboo - Enabled")
 
         menu = QMenu()
 
         self.toggle_action = QAction(
-            "Disable ImageHover", self
+            "Disable Peekaboo", self
         )
         self.toggle_action.triggered.connect(self.toggle)
 
@@ -582,11 +606,11 @@ class ImageHover(QObject):
         self.preview.close_preview()
 
         if self.enabled:
-            self.toggle_action.setText("Disable ImageHover")
-            self.tray.setToolTip("ImageHover - Enabled")
+            self.toggle_action.setText("Disable Peekaboo")
+            self.tray.setToolTip("Peekaboo - Enabled")
         else:
-            self.toggle_action.setText("Enable ImageHover")
-            self.tray.setToolTip("ImageHover - Disabled")
+            self.toggle_action.setText("Enable Peekaboo")
+            self.tray.setToolTip("Peekaboo - Disabled")
 
     def quit(self):
 
@@ -616,12 +640,12 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName("ImageHover")
+    app.setApplicationName("Peekaboo")
 
     icon = create_app_icon()
     app.setWindowIcon(icon)
 
-    application = ImageHover(app)
+    application = Peekaboo(app)
 
     try:
         sys.exit(app.exec())

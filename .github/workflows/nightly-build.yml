@@ -25,12 +25,12 @@ jobs:
         run: python -m pip install PySide6 pywin32 psutil pywinauto pyinstaller
 
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name HovUp imagehover.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name Peekaboo peekaboo.py
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: HovUp-windows-x64
-          path: dist/HovUp.exe
+          name: Peekaboo-windows-x64
+          path: dist/Peekaboo.exe
           if-no-files-found: error
           retention-days: 7

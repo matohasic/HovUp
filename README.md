@@ -26,11 +26,11 @@ are saved for the next launch in the current user's Windows Registry at
   image extensions.
 - [`detection.py`](./src/detection.py) — worker that identifies the image under
   the cursor in File Explorer.
-- [`icons.py`](./src/icons.py) — system tray application icon.
 - [`preview.py`](./src/preview.py) — image preview window and rendering.
 - [`settings.py`](./src/settings.py) — settings dialog and its controls.
 - [`windows.py`](./src/windows.py) — Windows API calls and Explorer folder
   detection.
+- [`peekaboo.ico`](./assets/peekaboo.ico) — shared tray and executable icon.
 
 ### Run from source
 
@@ -46,7 +46,7 @@ python .\src\application.py
 Build the standalone Windows executable from the repository root:
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --name Peekaboo src\application.py
+pyinstaller --noconfirm --clean --onefile --windowed --name Peekaboo --icon=assets\peekaboo.ico --add-data "assets\peekaboo.ico;assets" src\application.py
 ```
 
 The executable is created at `dist\Peekaboo.exe`. Start it with:

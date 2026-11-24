@@ -1,25 +1,32 @@
 import sys
 import time
 import traceback
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtCore import QObject, QPoint, QSettings, QTimer
 
 from config import (
     DEFAULT_SETTINGS, DETECTION_INTERVAL, POLL_INTERVAL
 )
 from detection import DetectionWorker
-from icons import create_app_icon
 from preview import Preview
 from settings import SettingsDialog
 from windows import get_cursor_position
 
 
+def load_app_icon():
+    app_dir = Path(
+        getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)
+    )
+    return QIcon(str(app_dir / "assets" / "peekaboo.ico"))
+
+
 class Peekaboo(QObject):
-    def __init__(self, app):
+    def __init__(self, app, app_icon):
         super().__init__()
 
         self.app = app
@@ -48,7 +55,7 @@ class Peekaboo(QObject):
         self.mouse_timer.timeout.connect(self.check_mouse)
         self.mouse_timer.start()
 
-        self.app_icon = create_app_icon()
+        self.app_icon = app_icon
         self.tray = QSystemTrayIcon(self.app_icon)
         self.tray.setToolTip("Peekaboo - Enabled")
 
@@ -212,10 +219,10 @@ def main(argv=None):
     app.setOrganizationName("Peekaboo")
     app.setApplicationName("Peekaboo")
 
-    icon = create_app_icon()
+    icon = load_app_icon()
     app.setWindowIcon(icon)
 
-    application = Peekaboo(app)
+    application = Peekaboo(app, icon)
 
     try:
         return app.exec()

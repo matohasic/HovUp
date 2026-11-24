@@ -10,7 +10,9 @@ from urllib.parse import urlparse, unquote
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel,
-    QSystemTrayIcon, QMenu
+    QSystemTrayIcon, QMenu, QDialog, QFormLayout,
+    QSpinBox, QCheckBox, QDialogButtonBox, QVBoxLayout,
+    QMessageBox
 )
 
 from PySide6.QtGui import (
@@ -21,6 +23,7 @@ from PySide6.QtGui import (
 
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QSize, QByteArray, QBuffer, QIODevice,
+    QSettings,
     QThread, Signal, QObject
 )
 
@@ -120,6 +123,16 @@ PREVIEW_MAX_HEIGHT = 300
 HOVER_DELAY = 100
 POLL_INTERVAL = 100
 DETECTION_INTERVAL = 200
+PREVIEW_OFFSET = 25
+
+DEFAULT_SETTINGS = {
+    "max_width": PREVIEW_MAX_WIDTH,
+    "max_height": PREVIEW_MAX_HEIGHT,
+    "opacity": 100,
+    "delay": HOVER_DELAY,
+    "offset": PREVIEW_OFFSET,
+    "animate": True,
+}
 
 IMAGE_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif",
@@ -131,14 +144,17 @@ IMAGE_EXTENSIONS = {
 # SIZE CALCULATION
 # =====================================================
 
-def calculate_preview_size(size):
+def calculate_preview_size(size, max_width, max_height):
 
     if not size.isValid():
-        return QSize(200, 150)
+        return QSize(
+            min(200, max_width - 4),
+            min(150, max_height - 4)
+        )
 
     return size.scaled(
-        PREVIEW_MAX_WIDTH - 4,
-        PREVIEW_MAX_HEIGHT - 4,
+        max_width - 4,
+        max_height - 4,
         Qt.AspectRatioMode.KeepAspectRatio
     )
 
@@ -284,10 +300,75 @@ class DetectionWorker(QThread):
 # PREVIEW WINDOW
 # =====================================================
 
+class SettingsDialog(QDialog):
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Peekaboo Settings")
+
+        self.max_width = QSpinBox()
+        self.max_width.setRange(100, 1200)
+        self.max_width.setSuffix(" px")
+        self.max_width.setValue(settings["max_width"])
+
+        self.max_height = QSpinBox()
+        self.max_height.setRange(100, 1000)
+        self.max_height.setSuffix(" px")
+        self.max_height.setValue(settings["max_height"])
+
+        self.opacity = QSpinBox()
+        self.opacity.setRange(20, 100)
+        self.opacity.setSuffix("%")
+        self.opacity.setValue(settings["opacity"])
+
+        self.delay = QSpinBox()
+        self.delay.setRange(0, 3000)
+        self.delay.setSuffix(" ms")
+        self.delay.setValue(settings["delay"])
+
+        self.offset = QSpinBox()
+        self.offset.setRange(0, 100)
+        self.offset.setSuffix(" px")
+        self.offset.setValue(settings["offset"])
+
+        self.animate = QCheckBox("Play animated GIF and WebP previews")
+        self.animate.setChecked(settings["animate"])
+
+        form = QFormLayout()
+        form.addRow("Maximum width:", self.max_width)
+        form.addRow("Maximum height:", self.max_height)
+        form.addRow("Opacity:", self.opacity)
+        form.addRow("Hover delay:", self.delay)
+        form.addRow("Cursor offset:", self.offset)
+        form.addRow(self.animate)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def selected_settings(self):
+        return {
+            "max_width": self.max_width.value(),
+            "max_height": self.max_height.value(),
+            "opacity": self.opacity.value(),
+            "delay": self.delay.value(),
+            "offset": self.offset.value(),
+            "animate": self.animate.isChecked(),
+        }
+
+
 class Preview(QWidget):
 
-    def __init__(self):
+    def __init__(self, settings):
         super().__init__()
+        self.settings = settings.copy()
 
         self.setWindowFlags(
             Qt.WindowType.Tool |
@@ -328,14 +409,46 @@ class Preview(QWidget):
         self.movie = None
         self.movie_buffer = None
         self.current_file = None
+        self.static_pixmap = None
+        self.source_size = QSize()
+        self.last_position = (0, 0)
 
         self.resize(200, 150)
+        self.setWindowOpacity(self.settings["opacity"] / 100)
+
+    def apply_settings(self, settings):
+        animate_was_enabled = self.settings["animate"]
+        self.settings = settings.copy()
+        self.setWindowOpacity(self.settings["opacity"] / 100)
+
+        if animate_was_enabled and not self.settings["animate"] and self.movie:
+            frame = self.movie.currentImage()
+            self._release_movie()
+            self.static_pixmap = QPixmap.fromImage(frame)
+            self.source_size = self.static_pixmap.size()
+            self.image_label.setPixmap(self.static_pixmap)
+        elif (
+            not animate_was_enabled
+            and self.settings["animate"]
+            and self.current_file
+            and self.current_file.lower().endswith((".gif", ".webp"))
+            and os.path.isfile(self.current_file)
+        ):
+            path = self.current_file
+            self.current_file = None
+            self.display(path, *self.last_position)
+
+        self._update_image_size()
+        if self.isVisible():
+            self._position_at(*self.last_position)
 
     def display(self, path, x, y):
 
         if not os.path.isfile(path):
             self.close_preview()
             return
+
+        self.last_position = (x, y)
 
         try:
 
@@ -344,11 +457,16 @@ class Preview(QWidget):
                 self._release_movie()
                 self.image_label.clear()
                 self.current_file = path
+                self.static_pixmap = None
+                self.source_size = QSize()
 
-                if path.lower().endswith((".gif", ".webp")):
+                if (
+                    self.settings["animate"]
+                    and path.lower().endswith((".gif", ".webp"))
+                ):
 
                     reader = QImageReader(path)
-                    target_size = calculate_preview_size(reader.size())
+                    self.source_size = reader.size()
 
                     self.movie_buffer = QBuffer(self)
                     self.movie_buffer.setData(
@@ -363,18 +481,8 @@ class Preview(QWidget):
                         )
 
                     self.movie = QMovie(self.movie_buffer)
-                    self.movie.setScaledSize(target_size)
-
                     self.image_label.setMovie(self.movie)
-
-                    self.setFixedSize(
-                        target_size.width() + 4,
-                        target_size.height() + 4
-                    )
-
-                    self.image_label.setGeometry(
-                        0, 0, self.width(), self.height()
-                    )
+                    self._update_image_size()
 
                     self.movie.start()
 
@@ -386,45 +494,11 @@ class Preview(QWidget):
                         self.close_preview()
                         return
 
-                    target_size = calculate_preview_size(pixmap.size())
+                    self.static_pixmap = pixmap
+                    self.source_size = pixmap.size()
+                    self._update_image_size()
 
-                    scaled = pixmap.scaled(
-                        target_size,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    )
-
-                    self.image_label.setPixmap(scaled)
-
-                    self.setFixedSize(
-                        scaled.width() + 4,
-                        scaled.height() + 4
-                    )
-
-                    self.image_label.setGeometry(
-                        0, 0, self.width(), self.height()
-                    )
-
-            screen = QApplication.screenAt(QPoint(int(x), int(y)))
-
-            if screen:
-
-                area = screen.availableGeometry()
-
-                px = x + 25
-                py = y + 25
-
-                if px + self.width() > area.right():
-                    px = x - self.width() - 25
-
-                if py + self.height() > area.bottom():
-                    py = y - self.height() - 25
-
-                px = max(area.left(), px)
-                py = max(area.top(), py)
-
-                self.move(int(px), int(py))
-
+            self._position_at(x, y)
             self.show()
 
         except Exception:
@@ -435,6 +509,8 @@ class Preview(QWidget):
 
         self._release_movie()
         self.image_label.clear()
+        self.static_pixmap = None
+        self.source_size = QSize()
         self.hide()
         self.current_file = None
 
@@ -454,6 +530,59 @@ class Preview(QWidget):
             buffer.close()
             buffer.deleteLater()
 
+    def _update_image_size(self):
+        if (
+            not self.source_size.isValid()
+            and not self.movie
+            and not self.static_pixmap
+        ):
+            return
+
+        target_size = calculate_preview_size(
+            self.source_size,
+            self.settings["max_width"],
+            self.settings["max_height"]
+        )
+
+        if self.movie:
+            self.movie.setScaledSize(target_size)
+        elif self.static_pixmap:
+            self.image_label.setPixmap(
+                self.static_pixmap.scaled(
+                    target_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+            )
+
+        self.setFixedSize(
+            target_size.width() + 4,
+            target_size.height() + 4
+        )
+        self.image_label.setGeometry(
+            0, 0, self.width(), self.height()
+        )
+
+    def _position_at(self, x, y):
+        screen = QApplication.screenAt(QPoint(int(x), int(y)))
+        if not screen:
+            return
+
+        area = screen.availableGeometry()
+        offset = self.settings["offset"]
+        px = x + offset
+        py = y + offset
+
+        if px + self.width() > area.right():
+            px = x - self.width() - offset
+
+        if py + self.height() > area.bottom():
+            py = y - self.height() - offset
+
+        px = max(area.left(), px)
+        py = max(area.top(), py)
+        self.move(int(px), int(py))
+
 
 # =====================================================
 # MAIN APPLICATION
@@ -466,7 +595,14 @@ class Peekaboo(QObject):
 
         self.app = app
         self.enabled = True
-        self.preview = Preview()
+        self.settings_store = QSettings()
+        self.settings = {
+            key: self.settings_store.value(
+                key, value, type=type(value)
+            )
+            for key, value in DEFAULT_SETTINGS.items()
+        }
+        self.preview = Preview(self.settings)
         self.pending_file = None
         self.last_position = (0, 0)
         self.last_detection = 0
@@ -475,7 +611,7 @@ class Peekaboo(QObject):
 
         self.hover_timer = QTimer(self)
         self.hover_timer.setSingleShot(True)
-        self.hover_timer.setInterval(HOVER_DELAY)
+        self.hover_timer.setInterval(self.settings["delay"])
         self.hover_timer.timeout.connect(self.show_preview)
 
         self.mouse_timer = QTimer(self)
@@ -503,7 +639,32 @@ class Peekaboo(QObject):
         menu.addAction(exit_action)
 
         self.tray.setContextMenu(menu)
+        self.settings_action = QAction("Settings", self)
+        self.settings_action.triggered.connect(self.open_settings)
+        menu.insertAction(self.toggle_action, self.settings_action)
+        menu.insertSeparator(self.toggle_action)
         self.tray.show()
+
+    def open_settings(self):
+        dialog = SettingsDialog(self.settings)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        self.settings = dialog.selected_settings()
+        self.preview.apply_settings(self.settings)
+        self.hover_timer.setInterval(self.settings["delay"])
+
+        for key, value in self.settings.items():
+            self.settings_store.setValue(key, value)
+
+        self.settings_store.sync()
+        if self.settings_store.status() != QSettings.Status.NoError:
+            QMessageBox.warning(
+                dialog,
+                "Peekaboo Settings",
+                "Settings were applied, but could not be saved."
+            )
 
     def check_mouse(self):
 
@@ -640,6 +801,7 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setOrganizationName("Peekaboo")
     app.setApplicationName("Peekaboo")
 
     icon = create_app_icon()
